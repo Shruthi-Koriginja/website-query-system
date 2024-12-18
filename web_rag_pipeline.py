@@ -1,92 +1,91 @@
-# Required Libraries
 import requests
 from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 
-# Step 1: Crawl and Scrape Website Content
+# Step 1: Scrape Website Content
 def scrape_website(url):
     """
-    Fetch and parse text content from a website.
+    Extract meaningful paragraphs from a website, excluding short or irrelevant content.
     """
-    response = requests.get(url)
-    if response.status_code != 200:
-        print("Failed to fetch the website")
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        paragraphs = [
+            p.get_text().strip() 
+            for p in soup.find_all('p') 
+            if len(p.get_text().strip()) > 30
+        ]
+        return paragraphs
+    except Exception as e:
+        print(f"Error scraping website: {e}")
         return []
-    
-    # Parse content with BeautifulSoup
-    soup = BeautifulSoup(response.text, 'html.parser')
-    paragraphs = [p.get_text() for p in soup.find_all('p')]
-    return paragraphs
 
-# Step 2: Create Embeddings for Content
-def create_embeddings(text_chunks, model):
+# Step 2: Convert Text to Embeddings
+def create_embeddings(chunks, model):
     """
-    Convert text into vector embeddings using a pre-trained model.
+    Convert chunks of text into vector embeddings.
     """
-    embeddings = model.encode(text_chunks, convert_to_tensor=True)
-    return np.array(embeddings.cpu())
+    return model.encode(chunks, convert_to_tensor=True).cpu().numpy()
 
-# Step 3: Build FAISS Index for Search
+# Step 3: Build FAISS Index
 def build_faiss_index(embeddings):
     """
-    Create a FAISS index for fast similarity searches.
+    Create a FAISS index for similarity search.
     """
-    dimension = embeddings.shape[1]  # Size of each embedding vector
-    index = faiss.IndexFlatL2(dimension)  # L2 distance for similarity search
+    index = faiss.IndexFlatL2(embeddings.shape[1])  # L2 distance
     index.add(embeddings)
     return index
 
-# Step 4: Search and Retrieve Relevant Chunks
-def search_query(query, model, index, text_chunks):
+# Step 4: Search and Rank Results
+def search_query(query, model, index, chunks):
     """
-    Search for the most relevant text chunks based on the query.
+    Search for the most relevant chunks based on query and rank results by similarity.
     """
     query_embedding = model.encode([query], convert_to_tensor=True).cpu().numpy()
-    distances, indices = index.search(query_embedding, k=3)  # Top 3 results
-    results = [text_chunks[i] for i in indices[0]]
-    return results
+    distances, indices = index.search(query_embedding, k=10)  # Fetch more results (e.g., top 10)
+    ranked_results = sorted(
+        [(chunks[i], distances[0][rank]) for rank, i in enumerate(indices[0])],
+        key=lambda x: x[1]
+    )
+    return [result[0] for result in ranked_results[:3]]
 
-# Step 5: Main Function for End-to-End Pipeline
+# Main Function
 def main():
     url = "https://www.stanford.edu/"  # Example website
-    
-    # Load pre-trained embedding model
+
+    # Load Model
     print("Loading embedding model...")
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    
-    # Scrape content
+    model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+
+    # Scrape Content
     print(f"Scraping website: {url}")
-    text_chunks = scrape_website(url)
-    if not text_chunks:
+    chunks = scrape_website(url)
+    if not chunks:
         print("No content retrieved from the website.")
         return
-    print(f"Retrieved {len(text_chunks)} text chunks.")
+    print(f"Retrieved {len(chunks)} text chunks.")
 
-    # Create embeddings
+    # Create Embeddings
     print("Creating embeddings...")
-    embeddings = create_embeddings(text_chunks, model)
+    embeddings = create_embeddings(chunks, model)
 
-    # Build FAISS index
+    # Build FAISS Index
     print("Building FAISS index...")
     index = build_faiss_index(embeddings)
 
-    # User query input
+    # User Queries
     while True:
         query = input("\nAsk your question (or type 'exit' to quit): ")
         if query.lower() == 'exit':
             break
-        
-        # Search for relevant content
         print("Searching for answers...")
-        results = search_query(query, model, index, text_chunks)
-        
-        # Display results
+        results = search_query(query, model, index, chunks)
         print("\nTop Results:")
-        for idx, res in enumerate(results):
-            print(f"{idx+1}. {res}\n")
+        for i, result in enumerate(results):
+            print(f"{i + 1}. {result}\n{'-' * 50}")
 
 if __name__ == "__main__":
     main()
-#C:\Users\Dell\OneDrive\Desktop
